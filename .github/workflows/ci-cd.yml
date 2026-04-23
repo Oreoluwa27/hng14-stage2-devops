@@ -128,10 +128,6 @@ jobs:
           docker push localhost:5000/hng-worker:${{ github.sha }}
           docker push localhost:5000/hng-worker:latest
 
-  security-scan:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
       - name: Install Trivy
         run: |
           sudo apt-get update
