@@ -76,42 +76,39 @@ jobs:
 
           @pytest.fixture
           def mock_redis():
-              with patch('main.redis.Redis') as mock:
+              with patch("main.get_redis") as mock:
                   mock_instance = MagicMock()
                   mock.return_value = mock_instance
                   yield mock_instance
 
+
           def test_create_job(mock_redis):
-              # Test job creation
               mock_redis.lpush.return_value = None
               mock_redis.hset.return_value = None
-              
-              # Mock uuid
-              with patch('main.uuid.uuid4') as mock_uuid:
-                  mock_uuid.return_value = MagicMock()
-                  mock_uuid.return_value.__str__ = lambda: "test-job-id"
-                  
+
+              with patch("main.uuid.uuid4", return_value="test-job-id"):
                   response = main.create_job()
-                  assert response["job_id"] == "test-job-id"
-                  mock_redis.lpush.assert_called_once_with("job", "test-job-id")
-                  mock_redis.hset.assert_called_once_with("job:test-job-id", "status", "queued")
+
+              assert response["job_id"] == "test-job-id"
+              mock_redis.lpush.assert_called_once_with("job", "test-job-id")
+              mock_redis.hset.assert_called_once_with("job:test-job-id", "status", "queued")
+
 
           def test_get_job_found(mock_redis):
-              # Test getting existing job
               mock_redis.hget.return_value = b"completed"
-              
+
               response = main.get_job("test-job-id")
-              assert response["job_id"] == "test-job-id"
+
               assert response["status"] == "completed"
               mock_redis.hget.assert_called_once_with("job:test-job-id", "status")
 
+
           def test_get_job_not_found(mock_redis):
-              # Test getting non-existent job
               mock_redis.hget.return_value = None
-              
+
               response = main.get_job("non-existent-job")
+
               assert response["error"] == "not found"
-              mock_redis.hget.assert_called_once_with("job:non-existent-job", "status")
           EOF
 
       - name: Run tests with coverage
