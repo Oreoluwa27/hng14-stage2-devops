@@ -1,0 +1,11 @@
+frontend/node_modules/
+node_modules/
+**/node_modules/
+.DS_Store
+*.log
+.env
+dist/
+build/
+coverage/
+api/__pycache__/
+worker/__pycache__/

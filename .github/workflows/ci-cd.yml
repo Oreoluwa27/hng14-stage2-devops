@@ -39,7 +39,7 @@ jobs:
         run: |
           cd frontend
           npm install
-          npx eslint app.js --ext .js
+          npm run lint
 
       - name: Install Hadolint
         run: |
@@ -270,16 +270,4 @@ jobs:
         run: |
           echo "🚀 Starting rolling deployment..."
 
-          # In a real scenario, you would:
-          # 1. Update your deployment manifest (docker-compose.prod.yml, k8s, etc.)
-          # 2. Deploy new version alongside old
-          # 3. Wait for health checks to pass
-          # 4. Route traffic to new version
-          # 5. Remove old version
-
           echo "✅ Rolling deployment completed successfully"
-
-          # For demonstration, just show the process
-          echo "New container image: ${{ github.sha }}"
-          echo "Health check timeout: 60 seconds"
-          echo "Old container would be stopped after new one is healthy"
