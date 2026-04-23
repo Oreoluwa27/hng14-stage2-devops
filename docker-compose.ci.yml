@@ -1,0 +1,168 @@
+version: "3.8"
+
+services:
+  frontend:
+    image: hng-frontend:latest
+    container_name: hng-frontend-ci
+
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+    env_file: .env
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: ${FRONTEND_CPU_LIMIT:-0.5}
+          memory: ${FRONTEND_MEMORY_LIMIT:-256M}
+        reservations:
+          cpus: ${FRONTEND_CPU_RESERVE:-0.25}
+          memory: ${FRONTEND_MEMORY_RESERVE:-128M}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+    security_opt:
+      - no-new-privileges:true
+
+    networks:
+      - app-network
+
+  backend:
+    image: hng-api:latest
+    container_name: hng-backend-ci
+
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+    env_file: .env
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: ${BACKEND_CPU_LIMIT:-1}
+          memory: ${BACKEND_MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: ${BACKEND_CPU_RESERVE:-0.5}
+          memory: ${BACKEND_MEMORY_RESERVE:-256M}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+    volumes:
+      - backend_logs:/app/logs
+
+    security_opt:
+      - no-new-privileges:true
+
+    networks:
+      - app-network
+
+  worker:
+    image: hng-worker:latest
+    container_name: hng-worker-ci
+
+    env_file: .env
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: ${WORKER_CPU_LIMIT:-0.5}
+          memory: ${WORKER_MEMORY_LIMIT:-256M}
+        reservations:
+          cpus: ${WORKER_CPU_RESERVE:-0.25}
+          memory: ${WORKER_MEMORY_RESERVE:-128M}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+    volumes:
+      - worker_logs:/app/logs
+
+    security_opt:
+      - no-new-privileges:true
+
+    networks:
+      - app-network
+
+  redis:
+    image: redis:${REDIS_VERSION:-7}-alpine
+    container_name: hng-redis-ci
+
+    env_file: .env
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    deploy:
+      resources:
+        limits:
+          cpus: ${REDIS_CPU_LIMIT:-0.5}
+          memory: ${REDIS_MEMORY_LIMIT:-256M}
+        reservations:
+          cpus: ${REDIS_CPU_RESERVE:-0.25}
+          memory: ${REDIS_MEMORY_RESERVE:-128M}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+
+    volumes:
+      - redis_data:/data
+
+    security_opt:
+      - no-new-privileges:true
+
+    command: redis-server --appendonly ${REDIS_APPENDONLY:-yes} --requirepass ${REDIS_PASSWORD:-}
+
+    networks:
+      - app-network
+
+volumes:
+  backend_logs:
+    driver: local
+  worker_logs:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge

@@ -20,3 +20,11 @@ def get_job(job_id: str):
     if not status:
         return {"error": "not found"}
     return {"job_id": job_id, "status": status.decode()}
+
+@app.get("/health")
+def health_check():
+    try:
+        r.ping()
+        return {"status": "healthy"}
+    except:
+        return {"status": "unhealthy"}

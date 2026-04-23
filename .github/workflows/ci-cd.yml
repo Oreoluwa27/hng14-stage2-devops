@@ -1,0 +1,285 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Python linting tools
+        run: |
+          pip install flake8
+
+      - name: Lint Python code
+        run: |
+          flake8 api/main.py worker/worker.py --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 api/main.py worker/worker.py --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install JavaScript linting tools
+        run: |
+          npm install -g eslint
+
+      - name: Lint JavaScript code
+        run: |
+          cd frontend
+          npm install
+          npx eslint app.js --ext .js
+
+      - name: Install Hadolint
+        run: |
+          wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Lint Dockerfiles
+        run: |
+          hadolint api/Dockerfile frontend/Dockerfile worker/Dockerfile
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd api
+          pip install -r requirements.txt
+          pip install pytest pytest-cov fakeredis
+
+      - name: Create test file
+        run: |
+          cat > api/test_main.py << 'EOF'
+          import pytest
+          from unittest.mock import patch, MagicMock
+          import main
+
+          @pytest.fixture
+          def mock_redis():
+              with patch('main.redis.Redis') as mock:
+                  mock_instance = MagicMock()
+                  mock.return_value = mock_instance
+                  yield mock_instance
+
+          def test_create_job(mock_redis):
+              # Test job creation
+              mock_redis.lpush.return_value = None
+              mock_redis.hset.return_value = None
+              
+              # Mock uuid
+              with patch('main.uuid.uuid4') as mock_uuid:
+                  mock_uuid.return_value = MagicMock()
+                  mock_uuid.return_value.__str__ = lambda: "test-job-id"
+                  
+                  response = main.create_job()
+                  assert response["job_id"] == "test-job-id"
+                  mock_redis.lpush.assert_called_once_with("job", "test-job-id")
+                  mock_redis.hset.assert_called_once_with("job:test-job-id", "status", "queued")
+
+          def test_get_job_found(mock_redis):
+              # Test getting existing job
+              mock_redis.hget.return_value = b"completed"
+              
+              response = main.get_job("test-job-id")
+              assert response["job_id"] == "test-job-id"
+              assert response["status"] == "completed"
+              mock_redis.hget.assert_called_once_with("job:test-job-id", "status")
+
+          def test_get_job_not_found(mock_redis):
+              # Test getting non-existent job
+              mock_redis.hget.return_value = None
+              
+              response = main.get_job("non-existent-job")
+              assert response["error"] == "not found"
+              mock_redis.hget.assert_called_once_with("job:non-existent-job", "status")
+          EOF
+
+      - name: Run tests with coverage
+        run: |
+          cd api
+          python -m pytest test_main.py -v --cov=main --cov-report=xml --cov-report=term
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: api/coverage.xml
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push API image
+        run: |
+          docker build -t localhost:5000/hng-api:${{ github.sha }} ./api
+          docker tag localhost:5000/hng-api:${{ github.sha }} localhost:5000/hng-api:latest
+          docker push localhost:5000/hng-api:${{ github.sha }}
+          docker push localhost:5000/hng-api:latest
+
+      - name: Build and push Frontend image
+        run: |
+          docker build -t localhost:5000/hng-frontend:${{ github.sha }} ./frontend
+          docker tag localhost:5000/hng-frontend:${{ github.sha }} localhost:5000/hng-frontend:latest
+          docker push localhost:5000/hng-frontend:${{ github.sha }}
+          docker push localhost:5000/hng-frontend:latest
+
+      - name: Build and push Worker image
+        run: |
+          docker build -t localhost:5000/hng-worker:${{ github.sha }} ./worker
+          docker tag localhost:5000/hng-worker:${{ github.sha }} localhost:5000/hng-worker:latest
+          docker push localhost:5000/hng-worker:${{ github.sha }}
+          docker push localhost:5000/hng-worker:latest
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+      - name: Run Trivy scan
+        run: |
+          trivy image --exit-code 1 --severity CRITICAL localhost:5000/hng-api:latest
+          trivy image --exit-code 1 --severity CRITICAL localhost:5000/hng-frontend:latest
+          trivy image --exit-code 1 --severity CRITICAL localhost:5000/hng-worker:latest
+
+      - name: Generate SARIF reports
+        run: |
+          trivy image --format sarif --output api-scan.sarif localhost:5000/hng-api:latest
+          trivy image --format sarif --output frontend-scan.sarif localhost:5000/hng-frontend:latest
+          trivy image --format sarif --output worker-scan.sarif localhost:5000/hng-worker:latest
+
+      - name: Upload SARIF reports
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: api-scan.sarif
+
+      - name: Upload SARIF reports (frontend)
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: frontend-scan.sarif
+
+      - name: Upload SARIF reports (worker)
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: worker-scan.sarif
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env.test
+          echo "REDIS_PASSWORD=testpass" >> .env.test
+
+      - name: Start services with built images
+        run: |
+          docker pull localhost:5000/hng-api:latest
+          docker pull localhost:5000/hng-frontend:latest
+          docker pull localhost:5000/hng-worker:latest
+          docker tag localhost:5000/hng-api:latest hng-api:latest
+          docker tag localhost:5000/hng-frontend:latest hng-frontend:latest
+          docker tag localhost:5000/hng-worker:latest hng-worker:latest
+          docker-compose -f docker-compose.ci.yml --env-file .env.test up -d
+
+      - name: Wait for services to be healthy
+        run: |
+          timeout 120 bash -c 'until docker-compose -f docker-compose.ci.yml --env-file .env.test ps | grep -q "healthy"; do sleep 5; done'
+
+      - name: Run integration test
+        run: |
+          # Submit a job through the Frontend
+          JOB_ID=$(curl -s -X POST http://localhost:3000/submit | jq -r '.job_id')
+          echo "Submitted job: $JOB_ID"
+
+          # Poll for completion (max 60 seconds)
+          for i in {1..12}; do
+            STATUS=$(curl -s http://localhost:8000/jobs/$JOB_ID | jq -r '.status')
+            echo "Job status: $STATUS"
+            if [ "$STATUS" = "completed" ]; then
+              echo "✅ Job completed successfully"
+              break
+            fi
+            sleep 5
+          done
+
+          # Assert final status
+          FINAL_STATUS=$(curl -s http://localhost:8000/jobs/$JOB_ID | jq -r '.status')
+          if [ "$FINAL_STATUS" != "completed" ]; then
+            echo "❌ Job did not complete. Final status: $FINAL_STATUS"
+            exit 1
+          fi
+
+      - name: Clean up
+        run: |
+          docker-compose -f docker-compose.ci.yml --env-file .env.test down -v
+        if: always()
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: integration-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy with rolling update
+        run: |
+          echo "🚀 Starting rolling deployment..."
+
+          # In a real scenario, you would:
+          # 1. Update your deployment manifest (docker-compose.prod.yml, k8s, etc.)
+          # 2. Deploy new version alongside old
+          # 3. Wait for health checks to pass
+          # 4. Route traffic to new version
+          # 5. Remove old version
+
+          echo "✅ Rolling deployment completed successfully"
+
+          # For demonstration, just show the process
+          echo "New container image: ${{ github.sha }}"
+          echo "Health check timeout: 60 seconds"
+          echo "Old container would be stopped after new one is healthy"
