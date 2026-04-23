@@ -19,7 +19,7 @@ def mock_redis():
     pipeline_mock = AsyncMock()
     pipeline_mock.__aenter__ = AsyncMock(return_value=pipeline_mock)
     pipeline_mock.__aexit__ = AsyncMock(return_value=False)
-    mock.pipeline.return_value = pipeline_mock
+    mock.pipeline = MagicMock(return_value=pipeline_mock)
 
     with patch("main.r", mock):
         yield mock

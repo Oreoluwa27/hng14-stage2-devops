@@ -2,3 +2,7 @@ fastapi
 uvicorn
 redis
 pytest
+pytest
+pytest-cov
+httpx
+anyio[trio]
