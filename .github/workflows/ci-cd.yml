@@ -66,7 +66,7 @@ jobs:
         run: |
           cd api
           pip install -r requirements.txt
-          pip install pytest pytest-cov fakeredis
+          pip install pytest pytest-cov httpx
 
       - name: Run tests with coverage
         run: |
