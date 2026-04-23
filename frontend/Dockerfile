@@ -1,7 +1,11 @@
-FROM node:24-alpine 
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
+
+FROM node:24-alpine AS production
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
 COPY app.js ./
 COPY views ./views
 
