@@ -143,19 +143,22 @@ jobs:
           trivy image --format sarif --output worker-scan.sarif localhost:5000/hng-worker:latest
 
       - name: Upload SARIF reports
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: api-scan.sarif
+          category: trivy-api
 
       - name: Upload SARIF reports (frontend)
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: frontend-scan.sarif
+          category: trivy-frontend
 
       - name: Upload SARIF reports (worker)
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: worker-scan.sarif
+          category: trivy-worker
 
   integration-test:
     runs-on: ubuntu-latest
